@@ -1,258 +1,229 @@
 #pragma once
 
-#include "Int128.hpp"
-#include <memory>
-#include <unordered_map>
-#include <string>
 #include <iostream>
+#include <map>
+#include <string>
+#include <string_view>
+#include <memory>
+#include "Int128.hpp"
 
-class Expression 
+class Expression;
+using ExprPtr = std::unique_ptr<Expression>;
+
+class Expression
 {
 public:
-    virtual Int128 eval(const std::unordered_map<std::string, Int128>& variables) const = 0;
-    virtual std::unique_ptr<Expression> clone() const = 0;
-    virtual void print(std::ostream& output_stream) const = 0;
-    
-    friend std::ostream& operator<<(std::ostream& output_stream, const Expression& expression)
+    virtual Expression* clone() const = 0;
+    virtual Int128 eval(const std::map<std::string, Int128>& values) const = 0;
+    virtual std::string str() const = 0;
+
+    friend std::ostream& operator<<(std::ostream& os, const Expression& expr)
     {
-        expression.print(output_stream);
-        return output_stream;
+        return os << expr.str();
     }
 
     virtual ~Expression() = default;
 };
 
-class Const : public Expression 
+class Const : public Expression
 {
+public:
+    explicit Const(Int128 v) : value(v) {}
+
+    Int128 eval(const std::map<std::string, Int128>&) const override
+    {
+        return value;
+    }
+
+    Expression* clone() const override
+    {
+        return new Const(value);
+    }
+
+    std::string str() const override
+    {
+        return value.str();
+    }
+
+private:
     Int128 value;
-    
-public:
-    explicit Const(Int128 val) : value(val) {}
-    
-    Int128 eval(const std::unordered_map<std::string, Int128>&) const override { return value; }
-    std::unique_ptr<Expression> clone() const override { return std::make_unique<Const>(value); }
-    void print(std::ostream& output_stream) const override { output_stream << value; }
 };
 
-class Variable : public Expression 
+class Variable : public Expression
 {
+public:
+    explicit Variable(std::string_view n) : name(n) {}
+
+    Int128 eval(const std::map<std::string, Int128>& values) const override
+    {
+        auto it = values.find(name);
+        if (it != values.end())
+        {
+            return it->second;
+        }
+        return Int128(0);
+    }
+
+    Expression* clone() const override
+    {
+        return new Variable(name);
+    }
+
+    std::string str() const override
+    {
+        return name;
+    }
+
+private:
     std::string name;
-    
-public:
-    explicit Variable(const std::string& var_name) : name(var_name) {}
-    
-    Int128 eval(const std::unordered_map<std::string, Int128>& variables) const override
-    {
-        auto iterator = variables.find(name);
-        return (iterator != variables.end()) ? iterator->second : Int128(0);
-    }
-    std::unique_ptr<Expression> clone() const override { return std::make_unique<Variable>(name); }
-    void print(std::ostream& output_stream) const override { output_stream << name; }
 };
 
-class Negate : public Expression 
+class Negate : public Expression
 {
-    std::unique_ptr<Expression> operand;
-    
 public:
-    explicit Negate(std::unique_ptr<Expression> expr) : operand(std::move(expr)) {}
-    
-    Negate(const Negate& other) : operand(other.operand->clone()) {}
-    Int128 eval(const std::unordered_map<std::string, Int128>& variables) const override { return -(operand->eval(variables)); }
-    std::unique_ptr<Expression> clone() const override { return std::make_unique<Negate>(operand->clone()); }
-    void print(std::ostream& output_stream) const override
+    explicit Negate(Expression* e) : expr(ExprPtr(e)) {}
+
+    Int128 eval(const std::map<std::string, Int128>& values) const override
     {
-        output_stream << "(-";
-        operand->print(output_stream);
-        output_stream << ")";
+        return -expr->eval(values);
     }
+
+    Expression* clone() const override
+    {
+        return new Negate(expr->clone());
+    }
+
+    std::string str() const override
+    {
+        return "-" + expr->str();
+    }
+
+private:
+    ExprPtr expr;
 };
 
-class Add : public Expression 
+class Add : public Expression
 {
-    std::unique_ptr<Expression> left_operand;
-    std::unique_ptr<Expression> right_operand;
-    
 public:
-    Add(std::unique_ptr<Expression> left, std::unique_ptr<Expression> right) : left_operand(std::move(left)), right_operand(std::move(right)) {}
-    Add(const Add& other) : left_operand(other.left_operand->clone()), right_operand(other.right_operand->clone()) {}
+    Add(Expression* l, Expression* r) : left(ExprPtr(l)), right(ExprPtr(r)) {}
 
-    Int128 eval(const std::unordered_map<std::string, Int128>& variables) const override { return left_operand->eval(variables) + right_operand->eval(variables); }
-    std::unique_ptr<Expression> clone() const override { return std::make_unique<Add>(left_operand->clone(), right_operand->clone()); }
-    void print(std::ostream& output_stream) const override
+    Int128 eval(const std::map<std::string, Int128>& values) const override
     {
-        output_stream << "(";
-        left_operand->print(output_stream);
-        output_stream << " + ";
-        right_operand->print(output_stream);
-        output_stream << ")";
+        return left->eval(values) + right->eval(values);
     }
+
+    Expression* clone() const override
+    {
+        return new Add(left->clone(), right->clone());
+    }
+
+    std::string str() const override
+    {
+        return "(" + left->str() + " + " + right->str() + ")";
+    }
+
+private:
+    ExprPtr left;
+    ExprPtr right;
 };
 
-class Subtract : public Expression 
+class Subtract : public Expression
 {
-    std::unique_ptr<Expression> left_operand;
-    std::unique_ptr<Expression> right_operand;
-    
 public:
-    Subtract(std::unique_ptr<Expression> left, std::unique_ptr<Expression> right) : left_operand(std::move(left)), right_operand(std::move(right)) {}
-    Subtract(const Subtract& other) : left_operand(other.left_operand->clone()), right_operand(other.right_operand->clone()) {}
-    
-    Int128 eval(const std::unordered_map<std::string, Int128>& variables) const override { return left_operand->eval(variables) - right_operand->eval(variables); }
-    std::unique_ptr<Expression> clone() const override { return std::make_unique<Subtract>(left_operand->clone(), right_operand->clone()); }
-    void print(std::ostream& output_stream) const override
+    Subtract(Expression* l, Expression* r) : left(ExprPtr(l)), right(ExprPtr(r)) {}
+
+    Int128 eval(const std::map<std::string, Int128>& values) const override
     {
-        output_stream << "(";
-        left_operand->print(output_stream);
-        output_stream << " - ";
-        right_operand->print(output_stream);
-        output_stream << ")";
+        return left->eval(values) - right->eval(values);
     }
+
+    Expression* clone() const override
+    {
+        return new Subtract(left->clone(), right->clone());
+    }
+
+    std::string str() const override
+    {
+        return "(" + left->str() + " - " + right->str() + ")";
+    }
+
+private:
+    ExprPtr left;
+    ExprPtr right;
 };
 
-class Multiply : public Expression 
+class Multiply : public Expression
 {
-    std::unique_ptr<Expression> left_operand;
-    std::unique_ptr<Expression> right_operand;
-    
 public:
-    Multiply(std::unique_ptr<Expression> left, std::unique_ptr<Expression> right) : left_operand(std::move(left)), right_operand(std::move(right)) {}
-    Multiply(const Multiply& other) : left_operand(other.left_operand->clone()), right_operand(other.right_operand->clone()) {}
+    Multiply(Expression* l, Expression* r) : left(ExprPtr(l)), right(ExprPtr(r)) {}
 
-    Int128 eval(const std::unordered_map<std::string, Int128>& variables) const override { return left_operand->eval(variables) * right_operand->eval(variables); }
-    std::unique_ptr<Expression> clone() const override { return std::make_unique<Multiply>(left_operand->clone(), right_operand->clone()); }
-    void print(std::ostream& output_stream) const override
+    Int128 eval(const std::map<std::string, Int128>& values) const override
     {
-        output_stream << "(";
-        left_operand->print(output_stream);
-        output_stream << " * ";
-        right_operand->print(output_stream);
-        output_stream << ")";
+        return left->eval(values) * right->eval(values);
     }
+
+    Expression* clone() const override
+    {
+        return new Multiply(left->clone(), right->clone());
+    }
+
+    std::string str() const override
+    {
+        return "(" + left->str() + " * " + right->str() + ")";
+    }
+
+private:
+    ExprPtr left;
+    ExprPtr right;
 };
 
-class Divide : public Expression 
+class Divide : public Expression
 {
-    std::unique_ptr<Expression> left_operand;
-    std::unique_ptr<Expression> right_operand;
-    
 public:
-    Divide(std::unique_ptr<Expression> left, std::unique_ptr<Expression> right) : left_operand(std::move(left)), right_operand(std::move(right)) {} 
-    Divide(const Divide& other) : left_operand(other.left_operand->clone()), right_operand(other.right_operand->clone()) {}
-    
-    Int128 eval(const std::unordered_map<std::string, Int128>& variables) const override { return left_operand->eval(variables) / right_operand->eval(variables); }
-    std::unique_ptr<Expression> clone() const override { return std::make_unique<Divide>(left_operand->clone(), right_operand->clone()); }
-    void print(std::ostream& output_stream) const override
+    Divide(Expression* l, Expression* r) : left(ExprPtr(l)), right(ExprPtr(r)) {}
+
+    Int128 eval(const std::map<std::string, Int128>& values) const override
     {
-        output_stream << "(";
-        left_operand->print(output_stream);
-        output_stream << " / ";
-        right_operand->print(output_stream);
-        output_stream << ")";
+        return left->eval(values) / right->eval(values);
     }
+
+    Expression* clone() const override
+    {
+        return new Divide(left->clone(), right->clone());
+    }
+
+    std::string str() const override
+    {
+        return "(" + left->str() + " / " + right->str() + ")";
+    }
+
+private:
+    ExprPtr left;
+    ExprPtr right;
 };
 
-inline std::unique_ptr<Expression> operator+(std::unique_ptr<Expression> left, std::unique_ptr<Expression> right)
+// Операторы
+inline Add operator+(const Expression& l, const Expression& r)
 {
-    return std::make_unique<Add>(std::move(left), std::move(right));
+    return Add(l.clone(), r.clone());
 }
 
-inline std::unique_ptr<Expression> operator-(std::unique_ptr<Expression> left, std::unique_ptr<Expression> right)
+inline Subtract operator-(const Expression& l, const Expression& r)
 {
-    return std::make_unique<Subtract>(std::move(left), std::move(right));
+    return Subtract(l.clone(), r.clone());
 }
 
-inline std::unique_ptr<Expression> operator*(std::unique_ptr<Expression> left, std::unique_ptr<Expression> right)
+inline Negate operator-(const Expression& e)
 {
-    return std::make_unique<Multiply>(std::move(left), std::move(right));
+    return Negate(e.clone());
 }
 
-inline std::unique_ptr<Expression> operator/(std::unique_ptr<Expression> left, std::unique_ptr<Expression> right)
+inline Multiply operator*(const Expression& l, const Expression& r)
 {
-    return std::make_unique<Divide>(std::move(left), std::move(right));
+    return Multiply(l.clone(), r.clone());
 }
 
-inline std::unique_ptr<Expression> operator-(std::unique_ptr<Expression> operand)
+inline Divide operator/(const Expression& l, const Expression& r)
 {
-    return std::make_unique<Negate>(std::move(operand));
-}
-
-inline std::unique_ptr<Expression> operator+(int64_t value, std::unique_ptr<Expression> right)
-{
-    return std::make_unique<Add>(std::make_unique<Const>(value), std::move(right));
-}
-
-inline std::unique_ptr<Expression> operator-(int64_t value, std::unique_ptr<Expression> right)
-{
-    return std::make_unique<Subtract>(std::make_unique<Const>(value), std::move(right));
-}
-
-inline std::unique_ptr<Expression> operator*(int64_t value, std::unique_ptr<Expression> right)
-{
-    return std::make_unique<Multiply>(std::make_unique<Const>(value), std::move(right));
-}
-
-inline std::unique_ptr<Expression> operator/(int64_t value, std::unique_ptr<Expression> right)
-{
-    return std::make_unique<Divide>(std::make_unique<Const>(value), std::move(right));
-}
-
-inline std::unique_ptr<Expression> operator+(std::unique_ptr<Expression> left, int64_t value)
-{
-    return std::make_unique<Add>(std::move(left), std::make_unique<Const>(value));
-}
-
-inline std::unique_ptr<Expression> operator-(std::unique_ptr<Expression> left, int64_t value)
-{
-    return std::make_unique<Subtract>(std::move(left), std::make_unique<Const>(value));
-}
-
-inline std::unique_ptr<Expression> operator*(std::unique_ptr<Expression> left, int64_t value)
-{
-    return std::make_unique<Multiply>(std::move(left), std::make_unique<Const>(value));
-}
-
-inline std::unique_ptr<Expression> operator+(int value, std::unique_ptr<Expression> right)
-{
-    return std::make_unique<Add>(std::make_unique<Const>(Int128(value)), std::move(right));
-}
-
-inline std::unique_ptr<Expression> operator-(int value, std::unique_ptr<Expression> right)
-{
-    return std::make_unique<Subtract>(std::make_unique<Const>(Int128(value)), std::move(right));
-}
-
-inline std::unique_ptr<Expression> operator*(int value, std::unique_ptr<Expression> right)
-{
-    return std::make_unique<Multiply>(std::make_unique<Const>(Int128(value)), std::move(right));
-}
-
-inline std::unique_ptr<Expression> operator/(int value, std::unique_ptr<Expression> right)
-{
-    return std::make_unique<Divide>(std::make_unique<Const>(Int128(value)), std::move(right));
-}
-
-inline std::unique_ptr<Expression> operator+(std::unique_ptr<Expression> left, int value)
-{
-    return std::make_unique<Add>(std::move(left), std::make_unique<Const>(Int128(value)));
-}
-
-inline std::unique_ptr<Expression> operator-(std::unique_ptr<Expression> left, int value)
-{
-    return std::make_unique<Subtract>(std::move(left), std::make_unique<Const>(Int128(value)));
-}
-
-inline std::unique_ptr<Expression> operator*(std::unique_ptr<Expression> left, int value)
-{
-    return std::make_unique<Multiply>(std::move(left), std::make_unique<Const>(Int128(value)));
-}
-
-inline std::unique_ptr<Expression> constant(Int128 value)
-{
-    return std::make_unique<Const>(value);
-}
-
-inline std::unique_ptr<Expression> variable(const std::string& name)
-{
-    return std::make_unique<Variable>(name);
+    return Divide(l.clone(), r.clone());
 }
